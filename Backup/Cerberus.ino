@@ -24,7 +24,7 @@ String chat_id;
 const int buzzer = 2;
 const int foto = 32;
 int buzzState = 0;
-int fotoState = analogRead(foto); 
+int magnetState = analogRead(foto); 
 
 // Handle what happens when you receive new messages
 void handleNewMessages(int numNewMessages) {
@@ -55,7 +55,7 @@ void handleNewMessages(int numNewMessages) {
       bot.sendMessage(chat_id, welcome, "");
     }
 
-    if (fotoState >= 1000) {
+    if (magnetState >= 1000) {
       buzzState = 1; 
       bot.sendMessage(chat_id, "ALARM utløst", "");
       tone(buzzer, 5000);
@@ -121,10 +121,10 @@ void loop() {
     }
     lastTimeBotRan = millis();
 
-    Serial.println(fotoState);
-    fotoState = analogRead(foto);
+    Serial.println(magnetState);
+    magnetState = analogRead(foto);
     
-    if (fotoState >= 1000) {
+    if (magnetState >= 1000) {
       bot.sendMessage(CHAT_ID, "ALARM utløst", "");
       tone(buzzer, 5000);
     }
