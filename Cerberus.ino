@@ -19,8 +19,8 @@ const int sirenPin = 25;
 
 //define sound speed in cm/uS
 #define SOUND_SPEED 0.034
-#define SIREN_TIMER 500 //Time for siren to be active in ms
-#define DM_TIMER 100
+#define SIREN_TIMER 100 //4000 //Time for siren to be active in ms
+#define DM_TIMER 1000
 
 long duration;
 float distanceCm;
@@ -28,6 +28,8 @@ float prevDistanceCm;
 bool sirenStatus = false;
 unsigned long sirenStartMillis = millis();
 unsigned long prevDistanceMeassure = millis();
+enum systemState {active = 0, inactive = 1};
+systemState SystemState = inactive;
 
 
 WiFiClientSecure client;
@@ -68,15 +70,21 @@ void setup() {
 
 void loop() {
   checkMessages();
-  getDistance();
-  alarmCheck();
-  
+
+  switch (SystemState) {
+    case active:
+      getDistance();
+      distanceCheck();
+      break;
+    case inactive:
+      // statements
+      break;
+  }
 }
 //-----------------------Functions--------------------//
 
 
 void getDistance() {
-  //if   (millis() <= prevDistanceMeassure + DM_TIMER){
     // Clears the trigPin
     digitalWrite(trigPin, LOW);
     delayMicroseconds(2);
@@ -92,26 +100,17 @@ void getDistance() {
     distanceCm = duration * SOUND_SPEED/2;
       
     // Prints the distance in the Serial Monitor
+    
+  if   (millis() <= prevDistanceMeassure + DM_TIMER){
     Serial.print("Distance (dm): ");
     Serial.println(int(distanceCm/10));
-  //  prevDistanceMeassure = millis();
-  //}
-}
-
-void runSiren(bool reset){
-  sirenStatus = reset;
-  if (millis() > sirenStartMillis + SIREN_TIMER){
-    sirenOFF();
-    sirenStatus = false;
-  }else if (sirenStatus == true){
-    sirenON();
-    sirenStartMillis = millis();
+    prevDistanceMeassure = millis();
   }
 }
 
-void alarmCheck() {
+
+void distanceCheck() {
   if (int(distanceCm)/10 != prevDistanceCm){
-    bot.sendMessage(CHAT_ID, "ALARM utløst", "");
     runSiren(true);  //start siren                   --set sirentime in define SIREN_TIMER
   }else{
     runSiren(false); //check if siren should turn off
@@ -119,9 +118,22 @@ void alarmCheck() {
   prevDistanceCm = int(distanceCm)/10;
 }
 
+void runSiren(bool reset){
+  sirenStatus = reset;
+  if (sirenStatus == true){
+    sirenON();
+    sirenStatus = false;
+    bot.sendMessage(CHAT_ID, "ALARM utløst", "");
+    sirenStartMillis = millis();
+  }else if (millis() > sirenStartMillis + SIREN_TIMER){
+    sirenOFF();
+    sirenStatus = false;
+  }
+}
 
 void sirenToggle(){
   digitalWrite(sirenPin, !digitalRead(sirenPin));
+  delay(1000);
 }
 void sirenON(){
   digitalWrite(sirenPin, LOW);
@@ -130,6 +142,24 @@ void sirenON(){
 void sirenOFF(){
   digitalWrite(sirenPin, HIGH);
   //Serial.println("siren off  ------");
+}
+void sirenBURST(){
+  digitalWrite(sirenPin, LOW);
+  delay(100);
+  digitalWrite(sirenPin, HIGH);
+  delay(100);
+  digitalWrite(sirenPin, LOW);
+  delay(100);
+  digitalWrite(sirenPin, HIGH);
+  delay(100);
+  digitalWrite(sirenPin, LOW);
+  delay(100);
+  digitalWrite(sirenPin, HIGH);
+  delay(100);
+  digitalWrite(sirenPin, LOW);
+  delay(100);
+  digitalWrite(sirenPin, HIGH);
+  delay(100);
 }
 
 void checkMessages(){
@@ -166,9 +196,10 @@ void handleNewMessages(int numNewMessages) {
 
     if (text == "/start") {
       String welcome = "Welcome, " + from_name + ".\n";
+      welcome += "System is currently \n\n";
       welcome += "Use the following commands to control your outputs.\n\n";
       welcome += "/System_test to flash onboard LED \n";
-      welcome += "/buzzer_off to turn GPIO OFF \n";
+      welcome += "/siren_burst to play a butiful siren hymn \n";
       welcome += "/status to request current GPIO status \n";
       bot.sendMessage(chat_id, welcome, "");
     }
@@ -187,9 +218,13 @@ void handleNewMessages(int numNewMessages) {
       }
     }
     
-    if (text == "siren_toggle") {
+    if (text == "/siren_toggle") {
       sirenToggle();
-      bot.sendMessage(chat_id, "Siren is turned OFF", "");
+      bot.sendMessage(chat_id, "Siren is toggled", "");
+    }
+    if (text == "/siren_burst") {
+      sirenBURST();
+      bot.sendMessage(chat_id, "Siren is bursting", "");
       
     }
   }
