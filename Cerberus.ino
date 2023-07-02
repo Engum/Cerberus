@@ -18,7 +18,7 @@ const int sirenPin = 25;
 
 //define sound speed in cm/uS
 #define SOUND_SPEED 0.034
-#define SIREN_TIMER 4000 //4000 //Time for siren to be active in ms
+#define SIREN_TIMER 100 //4000 //Time for siren to be active in ms
 #define DM_TIMER 20       // how often to meassure distance  and run distanceCheck
 #define DM_ArraySize 20  //HIGHER IS MORE SENSITIVE default: 20 // ammount of meassurements that are checked for movement. Higher number gives more time-range to detect movement        
 #define MA_ArraySize 20  //
@@ -56,23 +56,11 @@ void setup() {
   pinMode(sirenPin, OUTPUT); // Sets the trigPin as an Output
   digitalWrite(sirenPin, HIGH); // Sets the trigPin as an Output
 
-  
-  // Connect to Wi-Fi
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-
-  client.setCACert(TELEGRAM_CERTIFICATE_ROOT); // Add root certificate for api.telegram.org
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.println("Connecting to WiFi..");
-  }
-  // Print ESP32 Local IP Address
-  Serial.println(WiFi.localIP());
+  initWiFi();
 }
 
 void loop() {
   checkMessages();
-
   switch (SystemState) {
     case active:
       getDistance();
@@ -104,46 +92,20 @@ void getDistance() {
 
       
     // Prints the distance in the Serial Monitor
-//    Serial.print("Distance (dm): ");
-//    Serial.println(int(distanceCm/10));
+    //    Serial.print("Distance (dm): ");
+    //    Serial.println(int(distanceCm/10));
     prevDistanceMeassure = millis();
     distanceCheck(distanceCmInt);
   }
-}void distanceCheckBACKUP(int distanceCmInt) {
-  for (int i = 0; i < DM_ArraySize-1; i++) {
-      distanceVals[DM_ArraySize-1-i] = distanceVals[DM_ArraySize-2-i]; //exclude distanceVals[0]
-  }distanceVals[0] = distanceCmInt;                                    //add distanceVals[0]
-  
-  for (int i = 0; i < DM_ArraySize; i++) {
-      Serial.print(distanceVals[i]);
-  }Serial.println("");  
-
-  for (int i = 0; i < DM_ArraySize-1; i++) {
-    if (abs(distanceVals[i]-distanceVals[i+1]) >= DISTANCE_GAP_SENSITIVITY){
-      threatLevel++;
-      if ((abs(distanceVals[0]-distanceVals[i+1]) <= DISTANCE_GAP_SENSITIVITY) && (abs(distanceVals[i]-distanceVals[i+1]) <= MISSREAD_LIMIT)){
-      distanceAggreagte += abs(distanceVals[i]-distanceVals[i+1]);
-      //Serial.print(String(distanceAggreagte) + " ");
-      }
-    }
-  }    
-
-  if (threatLevel >= MEASURE_COUNT_SENSITIVITY){
-    runSiren(true);  //start siren                   --set sirentime in define SIREN_TIMER
-    Serial.println(""); 
-  }else{
-    runSiren(false); //check if siren should turn off
-  }  
-  threatLevel = 0;
-  distanceAggreagte = 0;
 }
+
 void distanceCheck(int distanceCmInt) {
   //-----------------------ShiftReg------------------//
   for (int i = 0; i < DM_ArraySize-1; i++) {
       distanceVals[DM_ArraySize-1-i] = distanceVals[DM_ArraySize-2-i]; //exclude distanceVals[0]
   }distanceVals[0] = distanceCmInt;                                    //add distanceVals[0]
   //-----------------------Printer------------------//
-/*  
+  /*  
   for (int i = 0; i < DM_ArraySize; i++) {
       Serial.print(distanceVals[i]);
   }Serial.println("");  //*/
@@ -152,42 +114,30 @@ void distanceCheck(int distanceCmInt) {
   for (int i = 0; i < MA_ArraySize-1; i++) {
       movingAverage[MA_ArraySize-1-i] = movingAverage[MA_ArraySize-2-i]; //exclude movingAverage[0]
   }
-  for (int i = 0; i < DM_ArraySize-1; i++) {
+    movingAverage[0] = distanceVals[0];
+  for (int i = 1; i < DM_ArraySize-1; i++) {
     movingAverage[0] += distanceVals[i];
   }
   for (int i = 0; i < DM_ArraySize; i++) {
-    Serial.print(movingAverage[i]);
   }Serial.println("");  //*/
-  
-for (int i = 0; i < DM_ArraySize-1; i++) {  
-  if (abs(movingAverage[0] - movingAverage[1]) >= DISTANCE_GAP_SENSITIVITY){
-    threatLevel++;
-    if ((abs(distanceVals[0]-distanceVals[i+1]) <= DISTANCE_GAP_SENSITIVITY) && (abs(distanceVals[i]-distanceVals[i+1]) <= MISSREAD_LIMIT)){
-    distanceAggreagte += abs(distanceVals[i]-distanceVals[i+1]);
-    }
-  }
-}
 
+    Serial.print(movingAverage[0]);
   
   //-----------------------DetectionLogic------------------//
-  for (int i = 0; i < DM_ArraySize-1; i++) {
-    if (abs(distanceVals[i]-distanceVals[i+1]) >= DISTANCE_GAP_SENSITIVITY){
+  for (int i = 0; i < DM_ArraySize-1; i++) {  
+    if (abs(movingAverage[i] - movingAverage[i+1]) >= DISTANCE_GAP_SENSITIVITY){
       threatLevel++;
-      if ((abs(distanceVals[0]-distanceVals[i+1]) <= DISTANCE_GAP_SENSITIVITY) && (abs(distanceVals[i]-distanceVals[i+1]) <= MISSREAD_LIMIT)){
-      distanceAggreagte += abs(distanceVals[i]-distanceVals[i+1]);
-      //Serial.print(String(distanceAggreagte) + " ");
-      }
     }
-  }    
+  } 
 
   if (threatLevel >= MEASURE_COUNT_SENSITIVITY){
     runSiren(true);  //start siren                   --set sirentime in define SIREN_TIMER
+    Serial.println(threatLevel); 
     Serial.println(""); 
   }else{
     runSiren(false); //check if siren should turn off
   }  
   threatLevel = 0;
-  distanceAggreagte = 0;
 }
 void runSiren(bool reset){
   sirenStatus = reset;
@@ -313,4 +263,18 @@ void handleNewMessages(int numNewMessages) {
       bot.sendMessage(chat_id, "Cerberus is asleep", "");
     }
   }
+}
+void initWiFi(){
+  
+  // Connect to Wi-Fi
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+
+  client.setCACert(TELEGRAM_CERTIFICATE_ROOT); // Add root certificate for api.telegram.org
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi..");
+  }
+  // Print ESP32 Local IP Address
+  Serial.println(WiFi.localIP());
 }
