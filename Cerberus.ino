@@ -1,52 +1,4 @@
-#include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <UniversalTelegramBot.h>   // Universal Telegram Bot Library written by Brian Lough: https://github.com/witnessmenow/Universal-Arduino-Telegram-Bot
-#include <ArduinoJson.h> 
-
-// Replace with your network credentials
-const char* ssid = "ASUS";
-const char* password = "vikommeretterdeg";
-
-// Initialize Telegram BOT
-#define BOTtoken "5931880125:AAHvkLIx7FOMdAu10QBGtnkazs_KtplCb4k"  // min Bot Token (Get from Botfather) Roberto 5931880125:AAHvkLIx7FOMdAu10QBGtnkazs_KtplCb4k
-
-#define CHAT_ID "5942012745"//Thomas ID 5942012745
-
-const int trigPin = 5;
-const int echoPin = 18;
-const int sirenPin = 25;
-
-//define sound speed in cm/uS
-#define SOUND_SPEED 0.034
-#define SIREN_TIMER 100 //4000 //Time for siren to be active in ms
-#define DM_TIMER 20       // how often to meassure distance  and run distanceCheck
-#define DM_ArraySize 20  //HIGHER IS MORE SENSITIVE default: 20 // ammount of meassurements that are checked for movement. Higher number gives more time-range to detect movement        
-#define MA_ArraySize 20  //
-//alarm sensitivity-requirement settings: LOWER IS MORE SENSITIVE. (more alarm)
-#define DISTANCE_GAP_SENSITIVITY 2 // required distance difference for alarm-trip default: 2   aprox: number*10cm  example: DISTANCE_GAP_SENSITIVITY at 2 means distance has to change 40cm from measure to measure to upp the treatlevel by one. 
-#define MEASURE_COUNT_SENSITIVITY 5 // ammout of required threatLevel-points, default: 5 choose between 0 and DM_ArraySize - 1      4 or less-unstable
-#define MISSREAD_LIMIT 70 // exclude unreasonable jumps in measurements from the detection logic
-
-long duration;
-float distanceCm;
-int distanceCmInt;
-bool sirenStatus = false;
-unsigned long sirenStartMillis = millis();
-unsigned long prevDistanceMeassure = millis();
-enum systemState {active = 0, inactive = 1};
-systemState SystemState = active;
-int distanceVals[DM_ArraySize];
-int threatLevel = 0;
-int distanceAggreagte = 0;
-int movingAverage[MA_ArraySize];
-
-WiFiClientSecure client;
-UniversalTelegramBot bot(BOTtoken, client);
-
-// Checks for new messages every 0,5 second.
-int botRequestDelay = 14000;
-unsigned long lastTimeBotRan;
-String chat_id;
+#include "Cerberus.h"
 
 void setup() {
   Serial.begin(115200);
@@ -54,26 +6,97 @@ void setup() {
   pinMode(trigPin, OUTPUT); // Sets the trigPin as an Output
   pinMode(echoPin, INPUT); // Sets the echoPin as an Input
   pinMode(sirenPin, OUTPUT); // Sets the trigPin as an Output
-  digitalWrite(sirenPin, HIGH); // Sets the trigPin as an Output
+  digitalWrite(sirenPin, HIGH);
 
   initWiFi();
+
+  xTaskCreatePinnedToCore(
+             pingThomas, /* Task function. */
+             "Task1",   /* name of task. */
+             10000,     /* Stack size of task */
+             NULL,      /* parameter of the task */
+             1,         /* priority of the task */
+             &Task1,    /* Task handle to keep track of created task */
+             1);        /* pin task to core 0 */
 }
 
 void loop() {
   checkMessages();
   switch (SystemState) {
+    case activation:
+      getDistance("stabilize");
+      break;
     case active:
-      getDistance();
+      getDistance("active");
       break;
     case inactive:
       sirenOFF();
-      break;
   }
 }
 
-
 //-----------------------Functions--------------------//
-void getDistance() {
+
+void pingThomas(void* parameter){
+  for(;;){
+    switch (SystemState) {
+    case active:
+      if (ENABLEPING) {PingForArrival();}
+      break;
+    case inactive:    
+      if (ENABLEPING) {PingForDeparture();}
+      break;
+    }
+    switch (MessageHelper) {
+      case alarmAlert:
+        Serial.println("MESSAGEHELPER");
+        bot.sendMessage(CHAT_ID, "Cerberus Engaged \n\n to rewiew options: /start ", "");
+        MessageHelper = none;
+        break;
+      default:
+        Serial.print("");
+        break;   
+    }
+  }
+}
+void PingForArrival(){
+  if (millis() > lastPing + PINGTIMER){
+      Serial.print("Ping: ");
+    if (Ping.ping("ThomasXIV.net")){
+      Serial.println("1");
+      bot.sendMessage(CHAT_ID, "Welcome Home Master Thomas!", "");
+      SystemState = inactive; 
+      Serial.println("deactivation");
+    }else{
+      Serial.println("0");      
+    }
+  }
+}
+void PingForDeparture(){//System inactive
+  if (millis() > lastPing + PINGTIMER){
+      Serial.print("Ping: ");
+    if (Ping.ping("ThomasXIV.net")||(Ping.ping("Vulcan.net"))){
+      Serial.println("1");
+      lastPing = lastPing + BIGTIME;
+      Serial.print("Bigtime");
+    }else{
+      Serial.println("0");
+      departureCounter++;
+      if (departureCounter == DEPARTURE_COUNTER_LIMIT){ //240 default 
+        bot.sendMessage(CHAT_ID, "Activation Test", "");
+      }      
+      if (departureCounter >= 5){
+        bot.sendMessage(CHAT_ID, "SYSTEM ACTIVATON INIT", "");
+        if (!Ping.ping("ThomasXIV.net")){
+          SystemState = active;     
+          Serial.print("activation");  
+        }
+        departureCounter = 0; 
+      }
+    lastPing = millis();
+    }
+  }
+}
+void getDistance(char* mode) {
   if   (millis() >= prevDistanceMeassure + DM_TIMER){
     // Clears the trigPin
     digitalWrite(trigPin, LOW);
@@ -95,45 +118,65 @@ void getDistance() {
     //    Serial.print("Distance (dm): ");
     //    Serial.println(int(distanceCm/10));
     prevDistanceMeassure = millis();
+    if (mode == "stabilize"){
+      stabilize(distanceCmInt); 
+      return;
+    }
     distanceCheck(distanceCmInt);
   }
 }
 
-void distanceCheck(int distanceCmInt) {
+void stabilize(int distanceCmInt){
+  organizeMovingAverage();
+  if (movingAverage[MA_ArraySize-1] == 0){      //exclude intronumbers
+    return;
+  }
+
+  for (int i = 0; i < MA_ArraySize; i++) {          //check for ArraySize of a kind
+    if (movingAverage[i] != movingAverage[0]){
+      return;
+    }
+  }
+  SystemState = active;
+}
+
+void organizeMovingAverage(){
   //-----------------------ShiftReg------------------//
   for (int i = 0; i < DM_ArraySize-1; i++) {
       distanceVals[DM_ArraySize-1-i] = distanceVals[DM_ArraySize-2-i]; //exclude distanceVals[0]
   }distanceVals[0] = distanceCmInt;                                    //add distanceVals[0]
-  //-----------------------Printer------------------//
-  /*  
-  for (int i = 0; i < DM_ArraySize; i++) {
-      Serial.print(distanceVals[i]);
-  }Serial.println("");  //*/
 
   //-----------------------MovingAverage------------------//  
   for (int i = 0; i < MA_ArraySize-1; i++) {
       movingAverage[MA_ArraySize-1-i] = movingAverage[MA_ArraySize-2-i]; //exclude movingAverage[0]
   }
-    movingAverage[0] = distanceVals[0];
+  movingAverage[0] = distanceVals[0];
   for (int i = 1; i < DM_ArraySize-1; i++) {
     movingAverage[0] += distanceVals[i];
   }
-  for (int i = 0; i < DM_ArraySize; i++) {
-  }Serial.println("");  //*/
+}
 
-    Serial.print(movingAverage[0]);
+void distanceCheck(int distanceCmInt) {
+  organizeMovingAverage();
+  #if (DEBUG)  
+    for (int i = 0; i < MA_ArraySize; i++) {
+      Serial.print(String(movingAverage[i]) + " ");
+    }Serial.println("");  
+  #endif
+    //Serial.print(movingAverage[0]);
   
   //-----------------------DetectionLogic------------------//
-  for (int i = 0; i < DM_ArraySize-1; i++) {  
+  for (int i = 0; i < MA_ArraySize-1; i++) {  
     if (abs(movingAverage[i] - movingAverage[i+1]) >= DISTANCE_GAP_SENSITIVITY){
       threatLevel++;
     }
-  } 
-
+  }
+  #if (DEBUG)  
+  Serial.print(String(threatLevel)+"   ");
+  #endif
   if (threatLevel >= MEASURE_COUNT_SENSITIVITY){
     runSiren(true);  //start siren                   --set sirentime in define SIREN_TIMER
-    Serial.println(threatLevel); 
-    Serial.println(""); 
+    //Serial.println(threatLevel);
   }else{
     runSiren(false); //check if siren should turn off
   }  
@@ -141,15 +184,22 @@ void distanceCheck(int distanceCmInt) {
 }
 void runSiren(bool reset){
   sirenStatus = reset;
+  if ((sirenStatus == true) && (millis() > AlarmStartMillis + ALARM_TIMER)){
+    Serial.print("alarm" + String(alarmAlert));
+    MessageHelper = alarmAlert;
+    Serial.print(alarmAlert);
+    AlarmStartMillis = millis();
+  }
   if (sirenStatus == true){
     sirenON();
     sirenStatus = false;
-   // bot.sendMessage(CHAT_ID, "ALARM utløst", "");
     sirenStartMillis = millis();
+    SystemState = activation;
   }else if (millis() > sirenStartMillis + SIREN_TIMER){
     sirenOFF();
     sirenStatus = false;
   }
+  
 }
 void sirenToggle(){
   digitalWrite(sirenPin, !digitalRead(sirenPin));
@@ -252,10 +302,10 @@ void handleNewMessages(int numNewMessages) {
       bot.sendMessage(chat_id, "Siren is bursting", "");
     }
     if (text == "/status") {
-      bot.sendMessage(chat_id, "SirenPin25 is currently " + String(digitalRead(sirenPin)), "");
+      bot.sendMessage(chat_id, "SirenPin25 is currently " + String(digitalRead(sirenPin)), + "Where 1 means relay is inactive" "");
     }
     if (text == "/awaken") {
-      SystemState = active;
+      SystemState = activation;
       bot.sendMessage(chat_id, "Sentry-mode Active", "");
     }
     if (text == "/sleep") {
